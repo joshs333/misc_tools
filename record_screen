@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+import screeninfo as si
+import argparse
+import subprocess
+import shlex
+import signal
+import time
+
+def monitor_str(name, monitor):
+    # Format an info string about a given monitor
+    return "%s: (X: %4d, Y: %4d, Width: %4d, Height: %4d)"%(
+                name,
+                monitor.x,
+                monitor.y,
+                monitor.width,
+                monitor.height
+            )
+
+def record_command(monitor, output):
+    return "ffmpeg -video_size %dx%d -framerate 25 -f x11grab -i :1.0+%d,%d -vcodec libx264 -pix_fmt yuv420p %s"%(
+                monitor.width,
+                monitor.height,
+                monitor.x,
+                monitor.y,
+                output
+            )
+
+def monitor_list():
+    ordered_list = []
+
+    raw_list = si.get_monitors()
+    if len(raw_list) < 1:
+        raise Exception("No monitors.")
+
+    ## A quick insertion sort algorithm
+    ordered_list.append(raw_list.pop())
+    for monitor in raw_list:
+        inserted = False
+        for i in range(len(ordered_list)):
+            if monitor.x < ordered_list[i].x:
+                ordered_list.insert(i, monitor)
+                inserted = True
+                break
+            elif monitor.x == ordered_list[i].x and monitor.y < ordered_list[i].y:
+                ordered_list.insert(i, monitor)
+                inserted = True
+                break
+        if not inserted:
+            ordered_list.append(monitor)
+
+    # Throw them into a map w/ names
+    ordered_map = {}
+    i = 0
+    for m in ordered_list:
+        ordered_map["M%d"%i] = m
+        i += 1
+
+    return ordered_map
+
+def get_args():
+    parser = argparse.ArgumentParser(
+        description="Makes a screen recording.",
+        epilog="Once recording simply use CTL-C to stop."
+    )
+    parser.add_argument('-l', '--list', action="store_true", help='List available monitors to record from.')
+    parser.add_argument('-m', '--monitor', help='Monitor to record from.')
+    parser.add_argument('-o', '--output', help='File to output to (Eg: recording.mp4)')
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = get_args()
+
+    monitors = monitor_list()
+
+    if args.list:
+        print("Listing available monitors (left->right, top->down):")
+        i = 0
+        for monitor_key in monitors.keys():
+            monitor = monitors[monitor_key]
+            print(monitor_str(monitor_key, monitor))
+            i += 1
+        exit(0)
+
+    if args.monitor == None:
+        print("Error: monitor must specified (use `--monitor`).")
+        exit(1)
+    elif args.monitor not in monitors:
+        print("Error: requested monitor [%s] not in monitor list. Please use `--list` to see available monitors."%args.monitor)
+        exit(1)
+    monitor = monitors[args.monitor]
+    print("Using monitor " + monitor_str(args.monitor, monitor))
+
+    if args.output == None:
+        print("Error: output must be specified (use `--output`).")
+        exit(1)
+    
+    command = record_command(monitor, args.output)
+    print("Running command: " + command)
+    
+    # makes sure the subprocess can exit properly and everything looks good
+    subproc = None
+    def signal_handler(sig, frame):
+        print('Stopping video...')
+        time.sleep(1) # Gives the ffmpeg time to print out
+        exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+    subproc = subprocess.Popen(shlex.split(command))
+    subproc.wait()
